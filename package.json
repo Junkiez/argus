@@ -1,0 +1,62 @@
+{
+  "name": "@kaze-no-ryuu/argus",
+  "version": "0.3.0",
+  "description": "Argus: visual diff of your local site against a live site or design images. Auto-detects framework and dev server, desktop/tablet/mobile, pinpoints changed elements, HTML report + JSON for CI and AI agents.",
+  "type": "module",
+  "bin": {
+    "argus": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./init": {
+      "types": "./dist/init.d.ts",
+      "default": "./dist/init.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "node --test \"test/*.test.ts\"",
+    "prepublishOnly": "npm run build && npm test",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=\"src/**\" \"test/*.test.ts\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "ai-agent",
+    "astro",
+    "cli",
+    "diff",
+    "nextjs",
+    "odiff",
+    "pixel-diff",
+    "playwright",
+    "responsive",
+    "screenshot",
+    "screenshot-comparison",
+    "visual-regression",
+    "visual-testing",
+    "vite"
+  ],
+  "author": "Kaze",
+  "license": "MIT",
+  "dependencies": {
+    "odiff-bin": "^3.2.1",
+    "playwright": "^1.45.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "types": "./dist/index.d.ts",
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^7.0.2"
+  }
+}
