@@ -47,6 +47,14 @@
   ],
   "author": "Kaze",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Junkiez/argus.git"
+  },
+  "homepage": "https://github.com/Junkiez/argus#readme",
+  "bugs": {
+    "url": "https://github.com/Junkiez/argus/issues"
+  },
   "dependencies": {
     "odiff-bin": "^3.2.1",
     "playwright": "^1.45.0"
