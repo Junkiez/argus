@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  DEFAULTS, autoConcurrency, isFailed, loadConfig, normalizeConfig, pageName, refImage, resolvePages, toBands,
+  DEFAULTS, autoConcurrency, isFailed, isMissingBrowser, loadConfig, normalizeConfig, pageName, refImage, resolvePages, toBands,
   type RawConfig, type Result,
 } from '../src/index.ts';
 import { fmtPct, writeReport } from '../src/report.ts';
@@ -185,6 +185,14 @@ describe('isFailed', () => {
     const c = { threshold: 0.1, imageThreshold: 2 };
     assert.ok(!isFailed(r({ refType: 'image', diffPercentage: 1.5 }), c));
     assert.ok(isFailed(r({ refType: 'remote', diffPercentage: 1.5 }), c));
+  });
+});
+
+describe('isMissingBrowser', () => {
+  it('recognises Playwright\'s missing-executable error only', () => {
+    assert.ok(isMissingBrowser(new Error("browserType.launch: Executable doesn't exist at /x/chrome-headless-shell")));
+    assert.ok(!isMissingBrowser(new Error('browserType.launch: Target page, context or browser has been closed')));
+    assert.ok(!isMissingBrowser('nope'));
   });
 });
 

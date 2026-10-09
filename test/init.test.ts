@@ -177,7 +177,7 @@ describe('init', () => {
     assert.deepEqual(cfg.pages, ['/']);
     assert.equal(cfg.refs, 'designs/{page}-{viewport}.png');
     assert.deepEqual(Object.keys(cfg.viewports), ['desktop', 'tablet', 'mobile']);
-    assert.equal(JSON.parse(t.read('package.json')).scripts.argus, 'argus');
+    assert.equal(JSON.parse(t.read('package.json')).scripts.argus, 'npx @kaze-no-ryuu/argus');
     assert.match(t.read('.gitignore'), /^\/argus\/$/m);
   });
 
@@ -196,6 +196,12 @@ describe('init', () => {
     await init({ cwd: t.dir, remote: 'https://a.dev', yes: true, log: quiet });
     await init({ cwd: t.dir, remote: 'https://b.dev', yes: true, force: true, log: quiet });
     assert.equal(JSON.parse(t.read('argus.config.json')).remote, 'https://b.dev');
+  });
+
+  it('uses the local bin when the package is installed', async () => {
+    pkg({ astro: '5', '@kaze-no-ryuu/argus': '^0.3.0' });
+    await init({ cwd: t.dir, remote: 'https://a.dev', yes: true, log: quiet });
+    assert.equal(JSON.parse(t.read('package.json')).scripts.argus, 'argus');
   });
 
   it('does not overwrite an existing "argus" script', async () => {

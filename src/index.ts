@@ -1,6 +1,7 @@
 import { chromium, type Browser, type BrowserContext, type Page as Tab } from 'playwright';
 import { compare } from 'odiff-bin';
-import { spawn, execSync } from 'node:child_process';
+import { spawn, execSync, execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import os from 'node:os';
@@ -26,6 +27,23 @@ export const DEFAULTS = {
 };
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+export const isMissingBrowser = (e: unknown) => /Executable doesn't exist/.test(errMsg(e));
+
+// Launches Chromium, downloading it first if it isn't installed yet, so
+// `npx argus` works without a separate `playwright install` step.
+export async function launchBrowser(log: Log): Promise<Browser> {
+  try {
+    return await chromium.launch();
+  } catch (e) {
+    if (!isMissingBrowser(e)) throw e;
+    log('Chromium is not installed yet, downloading it (one time, ~100 MB)...');
+    const cli = path.join(path.dirname(createRequire(import.meta.url).resolve('playwright')), 'cli.js');
+    // Output goes to stderr so --json stdout stays clean.
+    execFileSync(process.execPath, [cli, 'install', 'chromium'], { stdio: ['ignore', 2, 2] });
+    return chromium.launch();
+  }
+}
 
 // Fills defaults and resolves file paths relative to the config file.
 export function loadConfig(file = CONFIG_FILE): Config {
@@ -346,7 +364,7 @@ export async function run(cfg: Config, opts: RunOptions = {}): Promise<Summary> 
       });
     }
     let browser: Browser | undefined;
-    if (doShoot) browser = browserWs ? await chromium.connect(browserWs) : await chromium.launch();
+    if (doShoot) browser = browserWs ? await chromium.connect(browserWs) : await launchBrowser(log);
     try {
       const ctxs = new Map<string, BrowserContext>();
       if (browser) {

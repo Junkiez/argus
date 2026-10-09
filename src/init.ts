@@ -8,6 +8,7 @@ type Routes = (cwd: string) => string[];
 interface PackageJson { homepage?: string; scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
 
 const PLACEHOLDER = 'https://example.com';
+const SELF = (JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { name: string }).name;
 const SKIP_DIRS = /(^|\/)(node_modules|dist|build|out|\.git|\.next|\.astro|\.svelte-kit|\.nuxt|coverage|argus)(\/|$)/;
 
 function list(cwd: string, dir: string): string[] {
@@ -154,10 +155,12 @@ export async function init({ cwd = process.cwd(), remote, force = false, yes = f
     const text = fs.readFileSync(pkgPath, 'utf8');
     const pkg = JSON.parse(text) as PackageJson;
     if (!pkg.scripts?.['argus']) {
-      pkg.scripts = { ...pkg.scripts, 'argus': 'argus' };
+      // The `argus` bin only exists when the package is installed in the project.
+      const installed = SELF in { ...pkg.dependencies, ...pkg.devDependencies };
+      pkg.scripts = { ...pkg.scripts, argus: installed ? 'argus' : `npx ${SELF}` };
       const indent = text.match(/^[ \t]+(?=")/m)?.[0] ?? '  ';
       fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, indent)}\n`);
-      log('added "argus" script to package.json');
+      log(`added "argus" script to package.json: ${pkg.scripts.argus}`);
     }
   }
   const gi = path.join(cwd, '.gitignore');

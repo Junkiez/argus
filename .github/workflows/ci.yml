@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write # GitHub Packages
       id-token: write # npm trusted publishing (OIDC) + provenance
     steps:
       - uses: actions/checkout@v7
@@ -48,3 +49,13 @@ jobs:
       - run: npm publish --provenance --ignore-scripts # tests already ran in the test job
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Mirror to GitHub Packages so it shows on the repo page. GitHub requires
+      # the scope to match the repo owner, so it's published as @<owner>/argus there.
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          npm pkg set name="@${OWNER,,}/argus"
+          npm config set //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
+          npm publish --ignore-scripts --registry=https://npm.pkg.github.com

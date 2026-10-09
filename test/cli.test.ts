@@ -120,7 +120,7 @@ describe('cli: init', () => {
       const res = JSON.parse(r.stdout);
       assert.equal(res.created, true);
       assert.equal(res.config.local.url, 'http://localhost:5173');
-      assert.equal(JSON.parse(d.read('package.json')).scripts.argus, 'argus');
+      assert.equal(JSON.parse(d.read('package.json')).scripts.argus, 'npx @kaze-no-ryuu/argus');
     } finally { d.cleanup(); }
   });
 

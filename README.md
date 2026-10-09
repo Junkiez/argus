@@ -3,11 +3,10 @@
 **Does what you built match the real thing?** Argus compares your local site, page by page and at desktop, tablet and mobile sizes, against a **live reference site** and/or **design images**. It tells you how much changed and *which element* changed.
 
 ```bash
-npm i -D @kaze-no-ryuu/argus && npx playwright install chromium
-npx argus
+npx @kaze-no-ryuu/argus
 ```
 
-The first run detects your framework, writes a config and adds an `argus` npm script. Every run after that starts your dev server, screenshots everything, diffs it and writes one HTML report.
+That's the whole setup. The first run downloads Chromium if it isn't installed yet, detects your framework, writes a config and adds an `argus` npm script. Every run after that starts your dev server, screenshots everything, diffs it and writes one HTML report.
 
 ## Why Argus
 
@@ -37,11 +36,12 @@ Use the hosted services when you need a team review flow for screenshots that ch
 ## Quick start
 
 ```bash
-npm i -D @kaze-no-ryuu/argus
-npx playwright install chromium   # once, downloads the browser
+npm i -D @kaze-no-ryuu/argus      # pin the version in your project (optional, recommended for CI)
 npx argus init                    # detects your framework, writes argus.config.json, adds an npm script
-npm run argus
+npm run argus                     # first run downloads Chromium (~100 MB, once)
 ```
+
+On a fresh Linux machine or CI image, Chromium also needs system libraries. Install them once with `npx playwright install-deps chromium` (needs root).
 
 Running `npx argus` without a config does the `init` step for you.
 
