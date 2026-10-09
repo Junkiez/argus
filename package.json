@@ -1,6 +1,6 @@
 {
   "name": "@kaze-no-ryuu/argus",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Argus: visual diff of your local site against a live site or design images. Auto-detects framework and dev server, desktop/tablet/mobile, pinpoints changed elements, HTML report + JSON for CI and AI agents.",
   "type": "module",
   "bin": {
