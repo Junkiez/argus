@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { readFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { run, loadConfig, CONFIG_FILE } from './index.ts';
 import { init } from './init.ts';
@@ -18,6 +19,9 @@ const { values: a, positionals } = parseArgs({
     concurrency: { type: 'string', short: 'j' },
     shard: { type: 'string' },
     'browser-ws': { type: 'string' },
+    baseline: { type: 'string' },
+    'save-baseline': { type: 'string' },
+    allow: { type: 'string' },
     'no-shoot': { type: 'boolean' },
     'no-server': { type: 'boolean' },
     open: { type: 'boolean' },
@@ -47,6 +51,10 @@ if (a.help) {
   -j, --concurrency N parallel tabs (default: auto from CPU/memory)
   --shard k/n         run every n-th check starting at k (CI matrix)
   --browser-ws URL    use a remote browser (Playwright server / Browserless)
+  --save-baseline DIR store local screenshots in DIR as the approved state (no compare)
+  --baseline DIR      compare against the screenshots in DIR instead of remote/designs
+  --allow a,b         CSS selectors of elements that are expected to change; anything
+                      else that changed still fails
   --no-server         don't start local.command; expect local.url to be up
   --no-shoot          re-diff existing screenshots only
   --open              open the HTML report when done
@@ -70,15 +78,21 @@ try {
   }
   if (positionals.length) throw new Error(`unknown command "${positionals[0]}" (see --help)`);
 
+  if (a.baseline && a['save-baseline']) throw new Error('use either --baseline or --save-baseline, not both');
+  const baselineDir = a['save-baseline'] ?? a.baseline;
+
   if (!existsSync(a.config)) {
     log(`no ${a.config} found, running init`);
     const res = await init({ remote: a.remote, yes: a.yes || a.json, log });
-    if (res.needsRemote) throw new Error(`set "remote" in ${CONFIG_FILE} (or put reference PNGs in designs/ and remove "remote"), then run argus again`);
+    if (res.needsRemote && !baselineDir) throw new Error(`set "remote" in ${CONFIG_FILE} (or put reference PNGs in designs/ and remove "remote"), then run argus again`);
   }
 
-  const cfg = loadConfig(a.config);
+  // The folder given on the command line is relative to where argus is run.
+  const cfg = loadConfig(a.config, baselineDir ? { baseline: path.resolve(baselineDir) } : {});
   if (a.remote) cfg.remote = a.remote;
   const res = await run(cfg, {
+    saveBaseline: !!a['save-baseline'],
+    allow: list(a.allow),
     log,
     shoot: !a['no-shoot'],
     server: !a['no-server'],
@@ -91,6 +105,9 @@ try {
 
   if (a.json) {
     console.log(JSON.stringify(res, null, 2));
+  } else if (a['save-baseline']) {
+    for (const r of res.results) if (r.status === 'error') console.log(`${r.page} @ ${r.viewport}: ERROR ${r.error}`);
+    console.log(`\n${res.ok ? 'OK' : `FAILED: ${res.failed.join(', ')}`}\nBaseline: ${res.counts.passed} screenshots saved to ${cfg.baseline}`);
   } else {
     console.log(`\n${'Page'.padEnd(20)}${'Viewport'.padEnd(10)}${'Diff'.padEnd(10)}Where`);
     console.log('-'.repeat(70));

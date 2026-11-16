@@ -47,6 +47,12 @@ describe('normalizeConfig', () => {
     assert.throws(() => normalizeConfig({ ...base, remote: undefined }), /remote/);
     assert.doesNotThrow(() => normalizeConfig({ ...base, remote: undefined, refs: 'd/{page}.png' }));
     assert.doesNotThrow(() => normalizeConfig({ ...base, remote: undefined, pages: [{ path: '/', ref: 'a.png' }] }));
+    assert.doesNotThrow(() => normalizeConfig({ ...base, remote: undefined, baseline: 'base' }));
+  });
+
+  it('resolves the baseline folder against the root', () => {
+    assert.equal(normalizeConfig({ ...base, baseline: 'base' }, '/proj').baseline, path.resolve('/proj/base'));
+    assert.equal(normalizeConfig(base, '/proj').baseline, undefined);
   });
 
   it('requires local.url and pages', () => {
@@ -80,7 +86,7 @@ describe('resolvePages', () => {
 
   it('joins paths onto both base URLs without double slashes', () => {
     const [p] = resolvePages(cfg(['/about']));
-    assert.deepEqual(p, { name: 'about', path: '/about', ref: null, remoteUrl: 'https://ref.dev/about', localUrl: 'http://localhost:4321/about' });
+    assert.deepEqual(p, { name: 'about', path: '/about', ref: null, allow: [], remoteUrl: 'https://ref.dev/about', localUrl: 'http://localhost:4321/about' });
   });
 
   it('accepts paths without a leading slash', () => {

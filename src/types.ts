@@ -11,7 +11,7 @@ export type RefSpec = string | Record<string, string>;
 
 export type PageSpec =
   | string
-  | { path?: string; name?: string; remote?: string; local?: string; ref?: RefSpec };
+  | { path?: string; name?: string; remote?: string; local?: string; ref?: RefSpec; allow?: string[] };
 
 /** argus.config.json as written by the user. */
 export interface RawConfig {
@@ -19,6 +19,8 @@ export interface RawConfig {
   local: { url: string; command?: string | null };
   pages: PageSpec[];
   refs?: string;
+  /** Folder of approved screenshots (`<viewport>/<page>.png`). When set, it is the reference for every check. */
+  baseline?: string;
   viewports?: Record<string, Viewport>;
   threshold?: number;
   imageThreshold?: number;
@@ -48,11 +50,16 @@ export interface Page {
   name: string;
   path: string | null;
   ref: RefSpec | null;
+  /** CSS selectors of elements that are expected to change. */
+  allow: string[];
   remoteUrl: string | null;
   localUrl: string;
 }
 
 export interface Box { label: string; top: number; bottom: number }
+
+/** Box of an element matched by an `allow` selector, in CSS px. */
+export interface AllowRect { selector: string; top: number; bottom: number; left: number; right: number }
 
 export interface Band {
   y1: number;
@@ -69,20 +76,26 @@ export interface Result {
   page: string;
   path: string | null;
   viewport: string;
-  refType: 'remote' | 'image';
+  refType: 'remote' | 'image' | 'baseline';
   remoteUrl: string | null;
   localUrl: string;
-  /** Reference image path (remote screenshot or design image). */
+  /**
+   * Reference image path (remote screenshot, design image or baseline). When
+   * `allowed` is non-empty it is a copy with the allowed areas taken from local.
+   */
   remote: string;
   local: string;
   diff: string;
-  status: 'match' | 'diff' | 'error';
+  /** `saved`: the screenshot was stored as the new baseline, nothing was compared. */
+  status: 'match' | 'diff' | 'error' | 'saved';
   error?: string;
   diffPercentage?: number;
   diffCount?: number | null;
   size?: { remote: Size; local: Size };
   sizeMismatch?: boolean;
   bands?: Band[];
+  /** `allow` selectors that matched and were excluded from the comparison. */
+  allowed?: string[];
   failed?: boolean;
 }
 
@@ -107,4 +120,8 @@ export interface RunOptions {
   concurrency?: number;
   shard?: string;
   browserWs?: string;
+  /** Store local screenshots in `cfg.baseline` instead of comparing. */
+  saveBaseline?: boolean;
+  /** CSS selectors of elements expected to change, on every page. */
+  allow?: string[];
 }

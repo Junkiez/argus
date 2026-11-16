@@ -107,6 +107,34 @@ Export each frame as PNG at 1×, name it `<page>-<viewport>.png` and put it in `
 - The image width must equal the viewport width × `deviceScaleFactor`. A 375px mobile frame needs `"mobile": { "width": 375, … }`. If the width is wrong, that check shows an error explaining it.
 - A height difference is only a **warning** for images, because design frames rarely match the real page height. The pixel diff and changed areas are still reported.
 
+## Visual regression: compare against an earlier version of your own site
+
+No reference site or designs needed. Save the screenshots of a known-good state, then compare later runs against them:
+
+```bash
+npx argus --save-baseline baseline                 # on the good state (e.g. main): store screenshots, no compare
+npx argus --baseline baseline                      # on your change: fails if anything looks different
+npx argus --baseline baseline --allow "#pricing"   # ...except the element you meant to change
+```
+
+- The baseline is a plain folder of PNGs, `<dir>/<viewport>/<page>.png`. Where it lives is up to you: commit it, or have CI save it on every push to your main branch (as a build artifact or cache) and restore it in pull requests.
+- Take the baseline on the same OS as the comparison. Fonts render differently on Windows, macOS and Linux.
+- A page without a saved baseline is an error. Unlike design images, a height change fails the check.
+- `"baseline": "baseline"` in the config is the same as passing `--baseline` on every run.
+
+### Intended changes: `--allow`
+
+`--allow` takes CSS selectors (comma-separated) of the elements you changed on purpose. They are left out of the comparison, and everything else must still match:
+
+- If an allowed element kept its height, only its own box is ignored. A change right next to it still fails.
+- If it grew or shrank, the content below it is compared at its new position, so a taller pricing table doesn't make the footer fail. The whole rows the element covers are ignored in that case.
+- If the page changed height by more than the allowed elements can explain, the check fails as a size mismatch.
+- Selectors are matched on the local page. For an element you removed, allow its parent instead.
+
+Per page in the config: `{ "path": "/pricing", "allow": ["#pricing", ".plan-card"] }`. `--allow` also works against a `remote` site, but not against design images.
+
+In the report and JSON, `allowed` lists the selectors that were excluded, and the reference image is shown with those areas already taken from local.
+
 ## Output
 
 ```
@@ -117,7 +145,7 @@ argus/
   diffs/desktop/about.png      changed pixels in red
 ```
 
-A check **fails** when it changed more than the threshold, when the page size differs from the remote screenshot (missing or extra content), or when it errors (HTTP ≥ 400, timeout, missing or wrong-width image). Each result has `"failed": true/false` and `"refType": "remote" | "image"`.
+A check **fails** when it changed more than the threshold, when the page size differs from the remote screenshot (missing or extra content), or when it errors (HTTP ≥ 400, timeout, missing or wrong-width image). Each result has `"failed": true/false` and `"refType": "remote" | "image" | "baseline"`.
 
 ## CLI
 
@@ -125,6 +153,7 @@ A check **fails** when it changed more than the threshold, when the page size di
 argus init [--remote URL] [--force] [-y]
 argus [-c config] [-p /about,/faq] [--viewport mobile] [--json] [--open]
           [--no-server] [--no-shoot] [-j N] [--shard k/n] [--browser-ws URL]
+          [--save-baseline DIR | --baseline DIR] [--allow "#a,.b"]
 ```
 
 Exit codes: `0` everything within the threshold, `1` diffs found, `2` error.

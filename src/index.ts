@@ -7,7 +7,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { writeReport } from './report.ts';
-import type { Band, Box, Config, Log, Page, RawConfig, Result, RunOptions, Size, Summary, Viewport } from './types.ts';
+import { align } from './align.ts';
+import { decodePng, encodePng } from './png.ts';
+import type { AllowRect, Band, Box, Config, Log, Page, RawConfig, Result, RunOptions, Size, Summary, Viewport } from './types.ts';
 
 export type * from './types.ts';
 
@@ -46,15 +48,16 @@ export async function launchBrowser(log: Log): Promise<Browser> {
 }
 
 // Fills defaults and resolves file paths relative to the config file.
-export function loadConfig(file = CONFIG_FILE): Config {
+// `overrides` (e.g. from CLI flags) win over the file.
+export function loadConfig(file = CONFIG_FILE, overrides: Partial<RawConfig> = {}): Config {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as RawConfig;
-  return normalizeConfig(raw, path.dirname(path.resolve(file)));
+  return normalizeConfig({ ...raw, ...overrides }, path.dirname(path.resolve(file)));
 }
 
 export function normalizeConfig(raw: RawConfig, root = process.cwd()): Config {
   const merged = { ...DEFAULTS, ...raw, root };
-  if (!merged.remote && !merged.refs && !merged.pages?.some((p) => typeof p !== 'string' && p.ref)) {
-    throw new Error('config: set "remote" (reference site URL), "refs" (reference image pattern) or per-page "ref"');
+  if (!merged.remote && !merged.refs && !merged.baseline && !merged.pages?.some((p) => typeof p !== 'string' && p.ref)) {
+    throw new Error('config: set "remote" (reference site URL), "refs" (reference image pattern), per-page "ref" or "baseline"');
   }
   if (!merged.local?.url) throw new Error('config: "local.url" is required');
   if (!merged.pages?.length) throw new Error('config: "pages" is empty');
@@ -64,6 +67,7 @@ export function normalizeConfig(raw: RawConfig, root = process.cwd()): Config {
     out,
     diffDir: path.resolve(root, raw.diffDir ?? path.join(out, 'diffs')),
     report: path.resolve(root, raw.report ?? path.join(out, 'report.html')),
+    ...(raw.baseline && { baseline: path.resolve(root, raw.baseline) }),
   };
 }
 
@@ -86,6 +90,7 @@ export function resolvePages(cfg: Config): Page[] {
       name: p.name ?? pageName(any),
       path: p.path ?? null,
       ref: p.ref ?? null,
+      allow: p.allow ?? [],
       remoteUrl: p.remote?.includes('://') ? p.remote : cfg.remote && remotePath ? join(cfg.remote, remotePath) : null,
       localUrl: p.local?.includes('://') ? p.local : join(cfg.local.url, p.local ?? p.path ?? '/'),
     };
@@ -205,7 +210,19 @@ function collectBoxes(): Box[] {
   return out;
 }
 
-async function shoot(tab: Tab, url: string, outPath: string, cfg: Config): Promise<Box[]> {
+// Runs in the browser. Boxes of the elements the user expects to change.
+function collectAllowed(selectors: string[]): AllowRect[] {
+  const out: AllowRect[] = [];
+  for (const selector of selectors) {
+    for (const el of document.querySelectorAll(selector)) {
+      const r = el.getBoundingClientRect();
+      if (r.height > 0 && r.width > 0) out.push({ selector, top: r.top + scrollY, bottom: r.bottom + scrollY, left: r.left + scrollX, right: r.right + scrollX });
+    }
+  }
+  return out;
+}
+
+async function shoot(tab: Tab, url: string, outPath: string, cfg: Config, allow: string[] = []): Promise<{ boxes: Box[]; rects: AllowRect[] }> {
   const res = await tab.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
   if (res && res.status() >= 400) throw new Error(`${url} returned HTTP ${res.status()}`);
   // Scroll through so IntersectionObserver-driven animations fire.
@@ -219,7 +236,7 @@ async function shoot(tab: Tab, url: string, outPath: string, cfg: Config): Promi
   if (cfg.css) await tab.addStyleTag({ content: cfg.css });
   await tab.waitForTimeout(cfg.settle);
   await tab.screenshot({ path: outPath, fullPage: true, animations: 'disabled' });
-  return tab.evaluate(collectBoxes);
+  return { boxes: await tab.evaluate(collectBoxes), rects: allow.length ? await tab.evaluate(collectAllowed, allow) : [] };
 }
 
 function readHead(file: string, n: number) {
@@ -271,43 +288,80 @@ export function refImage(page: Pick<Page, 'name' | 'ref'>, vp: string, cfg: Pick
 
 interface Task { page: Page; vp: string; size: Viewport }
 
-async function runTask({ page, vp, size: vpSize, ctx, cfg }: Task & { ctx?: BrowserContext; cfg: Config }): Promise<Result> {
+interface TaskEnv { ctx?: BrowserContext; cfg: Config; save: boolean; allow: string[] }
+
+async function runTask({ page, vp, size: vpSize, ctx, cfg, save, allow }: Task & TaskEnv): Promise<Result> {
   const shotDir = path.join(cfg.out, vp);
   const diffDir = path.join(cfg.diffDir, vp);
-  fs.mkdirSync(shotDir, { recursive: true });
-  fs.mkdirSync(diffDir, { recursive: true });
-  const image = refImage(page, vp, cfg);
+  const baseline = cfg.baseline ? path.join(cfg.baseline, vp, `${page.name}.png`) : null;
+  const image = baseline ?? refImage(page, vp, cfg);
   const remote = image ?? path.join(shotDir, `${page.name}-remote.png`);
-  const local = path.join(shotDir, `${page.name}-local.png`);
+  const local = save && baseline ? baseline : path.join(shotDir, `${page.name}-local.png`);
   const diff = path.join(diffDir, `${page.name}.png`);
   const boxesFile = `${local}.boxes.json`;
+  const allowFile = `${local}.allow.json`;
+  const selectors = [...new Set([...allow, ...page.allow])];
+  const refType: Result['refType'] = baseline ? 'baseline' : image ? 'image' : 'remote';
   const base = {
-    page: page.name, path: page.path, viewport: vp, refType: image ? 'image' : 'remote',
+    page: page.name, path: page.path, viewport: vp, refType,
     remoteUrl: image ? null : page.remoteUrl, localUrl: page.localUrl, remote, local, diff,
-  } as const;
+  };
   try {
-    if (image) {
+    if (save) {
+      if (!ctx) throw new Error('saving a baseline needs new screenshots (run without --no-shoot)');
+      fs.mkdirSync(path.dirname(local), { recursive: true });
+      const tab = await ctx.newPage();
+      try { await shoot(tab, page.localUrl, local, cfg); } finally { await tab.close(); }
+      return { ...base, status: 'saved' };
+    }
+    fs.mkdirSync(shotDir, { recursive: true });
+    fs.mkdirSync(diffDir, { recursive: true });
+    if (baseline) {
+      if (!fs.existsSync(baseline)) throw new Error(`no baseline for ${page.name} @ ${vp}: ${baseline} not found (create it with --save-baseline)`);
+    } else if (image) {
       if (!fs.existsSync(image)) throw new Error(`reference image not found: ${image}`);
       if (!isPng(image)) throw new Error(`reference image must be PNG: ${image}`);
     } else if (!page.remoteUrl) {
       throw new Error(`no reference: set "remote", or add a ref image for ${page.name} @ ${vp}`);
     }
     let boxes: Box[];
+    let rects: AllowRect[] = [];
     if (ctx) {
       const tab = await ctx.newPage();
       try {
         if (!image) await shoot(tab, page.remoteUrl!, remote, cfg);
-        boxes = await shoot(tab, page.localUrl, local, cfg);
+        ({ boxes, rects } = await shoot(tab, page.localUrl, local, cfg, selectors));
         fs.writeFileSync(boxesFile, JSON.stringify(boxes));
+        fs.writeFileSync(allowFile, JSON.stringify({ selectors, rects }));
       } finally {
         await tab.close();
       }
     } else {
       try { boxes = JSON.parse(fs.readFileSync(boxesFile, 'utf8')); } catch { boxes = []; }
+      if (selectors.length) {
+        // Element positions were measured when the screenshots were taken.
+        let saved: { selectors?: string[]; rects?: AllowRect[] } = {};
+        try { saved = JSON.parse(fs.readFileSync(allowFile, 'utf8')); } catch {}
+        if (JSON.stringify(saved.selectors) !== JSON.stringify(selectors)) throw new Error('"allow" changed since the screenshots were taken (run without --no-shoot)');
+        rects = saved.rects ?? [];
+      }
     }
-    const r = await compare(remote, local, diff, { antialiasing: true, captureDiffLines: true, failOnLayoutDiff: false, noFailOnFsErrors: true });
+    // Allowed areas: compare against a copy of the reference that already has
+    // them taken from local, so only changes outside them are left.
+    const dpr = vpSize.deviceScaleFactor ?? 1;
+    let ref = remote;
+    if (rects.length && refType !== 'image' && fs.existsSync(remote) && fs.existsSync(local)) {
+      const fixed = align(decodePng(fs.readFileSync(remote)), decodePng(fs.readFileSync(local)),
+        rects.map((r) => ({ top: r.top * dpr, bottom: r.bottom * dpr, left: r.left * dpr, right: r.right * dpr })));
+      if (fixed) {
+        ref = path.join(shotDir, `${page.name}-allowed.png`);
+        fs.writeFileSync(ref, encodePng(fixed));
+        Object.assign(base, { remote: ref, allowed: [...new Set(rects.map((r) => r.selector))] });
+      }
+    }
+    const r = await compare(ref, local, diff, { antialiasing: true, captureDiffLines: true, failOnLayoutDiff: false, noFailOnFsErrors: true });
     if (!r.match && r.reason === 'file-not-exists') throw new Error(`missing screenshot ${r.file} (run without --no-shoot)`);
-    const size = { remote: pngSize(remote), local: pngSize(local) };
+    const size = { remote: pngSize(ref), local: pngSize(local) };
     if (image && size.remote.width !== size.local.width) {
       throw new Error(`reference image is ${size.remote.width}px wide but the ${vp} screenshot is ${size.local.width}px; `
         + 'match the viewport width (× deviceScaleFactor) to the design');
@@ -320,7 +374,7 @@ async function runTask({ page, vp, size: vpSize, ctx, cfg }: Task & { ctx?: Brow
     }
     if (r.reason === 'layout-diff') return { ...base, status: 'diff', diffPercentage: 100, diffCount: null, size, sizeMismatch: true, bands: [] };
     if (r.reason !== 'pixel-diff') throw new Error(`unexpected odiff result: ${JSON.stringify(r)}`);
-    const bands = toBands(r.diffLines ?? [], scaleBoxes(boxes, vpSize.deviceScaleFactor ?? 1));
+    const bands = toBands(r.diffLines ?? [], scaleBoxes(boxes, dpr));
     return { ...base, status: 'diff', diffPercentage: r.diffPercentage, diffCount: r.diffCount, size, sizeMismatch, bands };
   } catch (e) {
     return { ...base, status: 'error', error: errMsg(e).split('\n')[0] };
@@ -337,7 +391,8 @@ export function isFailed(r: Result, cfg: Pick<Config, 'threshold' | 'imageThresh
 }
 
 export async function run(cfg: Config, opts: RunOptions = {}): Promise<Summary> {
-  const { log = () => {}, shoot: doShoot = true, server = true, only, viewports, concurrency, shard, browserWs } = opts;
+  const { log = () => {}, shoot: doShoot = true, server = true, only, viewports, concurrency, shard, browserWs, saveBaseline = false, allow = [] } = opts;
+  if (saveBaseline && !cfg.baseline) throw new Error('saveBaseline: set "baseline" (folder for approved screenshots)');
   fs.mkdirSync(cfg.out, { recursive: true });
   let pages = resolvePages(cfg);
   if (only?.length) pages = pages.filter((p) => only.includes(p.name) || (p.path !== null && only.includes(p.path)));
@@ -380,7 +435,7 @@ export async function run(cfg: Config, opts: RunOptions = {}): Promise<Summary> 
       }
       await pool(tasks, n, async (t) => {
         log(`${t.page.name} @ ${t.vp}`);
-        results.push(await runTask({ ...t, ctx: ctxs.get(t.vp), cfg }));
+        results.push(await runTask({ ...t, ctx: ctxs.get(t.vp), cfg, save: saveBaseline, allow }));
       });
     } finally {
       if (browser) await browser.close();
@@ -409,6 +464,6 @@ export async function run(cfg: Config, opts: RunOptions = {}): Promise<Summary> 
     failed: failedResults.map((r) => `${r.page}@${r.viewport}`),
     results,
   };
-  writeReport(summary, cfg);
+  if (!saveBaseline) writeReport(summary, cfg); // nothing was compared when saving
   return summary;
 }

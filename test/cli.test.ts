@@ -103,6 +103,28 @@ describe('cli: run', () => {
     assert.match(JSON.parse(r.stdout).error, /remote/);
   });
 
+  it('--save-baseline stores screenshots, --baseline compares against them, --allow excludes elements', async () => {
+    const saved = await argus(t.dir, '--save-baseline', 'approved');
+    assert.equal(saved.code, 0);
+    assert.match(saved.stdout, /4 screenshots saved to .*approved/);
+    assert.ok(fs.existsSync(path.join(t.dir, 'approved/desktop/about.png')));
+
+    const same = await argus(t.dir, '--json', '--baseline', 'approved');
+    assert.equal(same.code, 0);
+    assert.equal(JSON.parse(same.stdout).results[0].refType, 'baseline');
+
+    // Point local at the white site: /about's hero differs from the approved red one.
+    const args = ['--json', '-c', 'white.json', '--baseline', 'approved', '-p', 'about', '--viewport', 'desktop'];
+    t.write('white.json', JSON.stringify({ local: { url: remote.url }, pages: ['/', '/about'], viewports: VIEWPORTS }));
+    assert.equal((await argus(t.dir, ...args)).code, 1);
+    const allowed = await argus(t.dir, ...args, '--allow', '#hero, #nope');
+    assert.equal(allowed.code, 0);
+    assert.deepEqual(JSON.parse(allowed.stdout).results[0].allowed, ['#hero']);
+
+    const both = await argus(t.dir, '--baseline', 'a', '--save-baseline', 'b');
+    assert.equal(both.code, 2);
+  });
+
   it('a bad shard exits 2', async () => {
     const r = await argus(t.dir, '--shard', '0/2');
     assert.equal(r.code, 2);

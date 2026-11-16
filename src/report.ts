@@ -12,9 +12,13 @@ const id = (r: Result) => `r-${r.page}-${r.viewport}`.replace(/[^\w-]/g, '_');
 function detail(r: Result, rel: (f: string) => string) {
   const head = `<summary><span class="dot ${tone(r)}"></span><b>${esc(r.page)}</b> <span class="muted">${esc(r.viewport)}</span>
     <span class="pct ${tone(r)}">${pct(r)}</span></summary>`;
-  const refLabel = r.refType === 'image' ? 'reference' : 'remote';
-  const refLink = r.refType === 'image' ? `image <code>${esc(rel(r.remote))}</code>` : `remote <a href="${esc(r.remoteUrl)}">${esc(r.remoteUrl)}</a>`;
-  const links = `<p class="muted">${refLink} · local <a href="${esc(r.localUrl)}">${esc(r.localUrl)}</a></p>`;
+  const refLabel = r.refType === 'image' ? 'reference' : r.refType === 'baseline' ? 'baseline' : 'remote';
+  const refLink = r.refType === 'remote' ? `remote <a href="${esc(r.remoteUrl)}">${esc(r.remoteUrl)}</a>`
+    : `${r.refType} <code>${esc(rel(r.remote))}</code>`;
+  const allowed = r.allowed?.length
+    ? ` · allowed to change: ${r.allowed.map((s) => `<code>${esc(s)}</code>`).join(' ')} (shown as in local in the ${refLabel} image)`
+    : '';
+  const links = `<p class="muted">${refLink} · local <a href="${esc(r.localUrl)}">${esc(r.localUrl)}</a>${allowed}</p>`;
   if (r.status === 'error') return `<details id="${id(r)}" class="card" open>${head}${links}<p class="errmsg">${esc(r.error)}</p></details>`;
 
   const s = r.size!;
@@ -86,7 +90,7 @@ img{display:block;max-width:100%;height:auto;border:1px solid var(--line)}
 .frame{position:relative}.band{position:absolute;left:0;right:0;background:color-mix(in srgb,var(--bad) 18%,transparent);border-left:4px solid var(--bad)}
 </style></head><body><main>
 <h1>Argus report</h1>
-<p class="muted">${esc(new Date().toISOString())} · ${cfg.remote ? `remote <a href="${esc(cfg.remote)}">${esc(cfg.remote)}</a>` : 'reference images'}${cfg.remote && cfg.refs ? ` + images <code>${esc(cfg.refs)}</code>` : ''} vs local <a href="${esc(cfg.local.url)}">${esc(cfg.local.url)}</a> · threshold ${threshold}%</p>
+<p class="muted">${esc(new Date().toISOString())} · ${cfg.baseline ? `baseline <code>${esc(rel(cfg.baseline))}</code>` : `${cfg.remote ? `remote <a href="${esc(cfg.remote)}">${esc(cfg.remote)}</a>` : 'reference images'}${cfg.remote && cfg.refs ? ` + images <code>${esc(cfg.refs)}</code>` : ''}`} vs local <a href="${esc(cfg.local.url)}">${esc(cfg.local.url)}</a> · threshold ${threshold}%</p>
 <div class="chips"><div class="chip"><b class="${summary.ok ? 'ok' : 'bad'}">${summary.ok ? 'PASS' : 'FAIL'}</b>result</div>
 <div class="chip"><b>${counts.total}</b>checks</div><div class="chip"><b class="ok">${counts.passed}</b>passed</div>
 <div class="chip"><b class="bad">${counts.failed}</b>over threshold</div><div class="chip"><b class="bad">${counts.errors}</b>errors</div></div>

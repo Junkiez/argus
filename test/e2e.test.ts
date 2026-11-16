@@ -173,6 +173,97 @@ describe('reference images', () => {
   });
 });
 
+describe('baseline (visual regression)', () => {
+  const page = (hero = 'height:200px;background:#eee', footer = '#ccc') => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<body style="margin:0"><header id="top" style="height:100px;background:#fff"></header>
+<section id="hero" style="${hero}"></section><footer id="foot" style="height:100px;background:${footer}"></footer></body>`;
+  const routes: Record<string, string> = { '/': page() };
+  let app: Awaited<ReturnType<typeof site>>;
+  const c = (raw: Partial<RawConfig> = {}) => config(t.dir, { local: { url: app.url }, pages: ['/'], baseline: 'base', out: 'reg', ...raw });
+  const check = async (body: string, allow?: string[]) => {
+    routes['/'] = body;
+    const res = await run(c(), { allow, log: quiet });
+    return { res, r: finder(res)('index', 'desktop') };
+  };
+
+  before(async () => { app = await site(routes); });
+  after(() => app.close());
+
+  it('saves local screenshots as the baseline without comparing', async () => {
+    const res = await run(c(), { saveBaseline: true, log: quiet });
+    assert.equal(res.ok, true);
+    assert.deepEqual(res.results.map((r) => r.status), ['saved', 'saved']);
+    assert.ok(fs.existsSync(path.join(t.dir, 'base/desktop/index.png')));
+    assert.ok(fs.existsSync(path.join(t.dir, 'base/mobile/index.png')));
+    assert.ok(!fs.existsSync(path.join(t.dir, 'reg/report.html')));
+  });
+
+  it('an unchanged page matches its baseline', async () => {
+    const { res, r } = await check(page());
+    assert.equal(res.ok, true);
+    assert.equal(r.refType, 'baseline');
+    assert.equal(r.status, 'match');
+    assert.match(t.read('reg/report.html'), /baseline <code>\.\.\/base<\/code>/);
+  });
+
+  it('a change fails, unless that element is allowed to change', async () => {
+    const changed = page('height:200px;background:red');
+    const plain = await check(changed);
+    assert.equal(plain.r.failed, true);
+    assert.equal(plain.r.bands[0].where[0], 'section#hero');
+    const allowed = await check(changed, ['#hero']);
+    assert.equal(allowed.res.ok, true);
+    assert.equal(allowed.r.status, 'match');
+    assert.deepEqual(allowed.r.allowed, ['#hero']);
+    assert.match(t.read('reg/report.html'), /allowed to change: <code>#hero<\/code>/);
+  });
+
+  it('an allowed element may change height; content below it is still checked', async () => {
+    const taller = page('height:350px;background:red');
+    const plain = await check(taller);
+    assert.ok(plain.r.sizeMismatch && plain.r.failed);
+    const allowed = await check(taller, ['#hero']);
+    assert.equal(allowed.res.ok, true);
+    assert.equal(allowed.r.sizeMismatch, false);
+
+    const broken = await check(page('height:350px;background:red', 'blue'), ['#hero']);
+    assert.equal(broken.r.failed, true);
+    assert.deepEqual([broken.r.bands[0].y1, broken.r.bands[0].y2], [450, 549]);
+    assert.equal(broken.r.bands[0].where[0], 'footer#foot');
+  });
+
+  it('a change outside the allowed element still fails', async () => {
+    const { r } = await check(page('height:200px;background:#eee', 'blue'), ['#hero']);
+    assert.equal(r.failed, true);
+    assert.equal(r.bands[0].where[0], 'footer#foot');
+  });
+
+  it('pages can list their own allowed elements', async () => {
+    routes['/'] = page('height:120px;background:red');
+    const res = await run(c({ pages: [{ path: '/', allow: ['section'] }] }), { log: quiet });
+    assert.equal(res.ok, true);
+    assert.deepEqual(finder(res)('index', 'mobile').allowed, ['section']);
+  });
+
+  it('--no-shoot reuses the measured elements, and refuses a different allow list', async () => {
+    await check(page('height:350px;background:red'), ['#hero']);
+    const again = await run(c(), { allow: ['#hero'], shoot: false, log: quiet });
+    assert.equal(again.ok, true);
+    const other = await run(c(), { allow: ['#foot'], shoot: false, log: quiet });
+    assert.match(finder(other)('index', 'desktop').error, /"allow" changed/);
+  });
+
+  it('a page without a baseline is a clear error', async () => {
+    routes['/new'] = page();
+    const res = await run(c({ pages: ['/new'] }), { log: quiet });
+    assert.match(finder(res)('new', 'desktop').error, /no baseline for new @ desktop.*--save-baseline/);
+  });
+
+  it('saving needs a baseline folder', async () => {
+    await assert.rejects(run(cfg(), { saveBaseline: true, log: quiet }), /set "baseline"/);
+  });
+});
+
 describe('high-DPI viewport', () => {
   it('scales element boxes to device pixels', async () => {
     const res = await run(cfg({ pages: ['/about'], out: 'hidpi', viewports: { retina: { width: 200, height: 300, deviceScaleFactor: 2 } } }), { log: quiet });
